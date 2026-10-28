@@ -7,17 +7,21 @@ from flask import Flask
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
-from aiogram.filters import Command
+from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-# ==== 配置 ====
+# ==== НАСТРОЙКИ ====
 TOKEN = os.environ.get("BOT_TOKEN", "1780243372:aPw1oJFaZKGqLzbUSPSxZiTyWlssSX_o_ST")
 BASE_URL = "https://misugram.cloud-ip.cc"
 VIDEO_FILE_ID = "ZG9jOjIwMDY2MTg3NzcwMDM5NDU4Njc"
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("driftbot")
 
-# Flask 应用，用于 Render 健康检查
+# Flask для Render health check
 app = Flask(__name__)
 
 @app.route("/")
@@ -25,15 +29,28 @@ app = Flask(__name__)
 def health():
     return "OK", 200
 
-# aiogram 机器人
+# aiogram
 server = TelegramAPIServer.from_base(BASE_URL)
 session = AiohttpSession(api=server)
 bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
 
-@dp.message(Command("start"))
+
+@dp.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer("Привет! Напиши «эль дрифто» — и я пришлю видео.")
+    log.info("Получен /start от %s", message.from_user.id)
+    # Сначала текст, потом видео — так пользователь точно увидит ответ
+    await message.answer("Привет! Вот твоё видео 🎬")
+    try:
+        await message.answer_video(video=VIDEO_FILE_ID)
+        log.info("Видео отправлено успешно")
+    except Exception as e:
+        log.exception("Не удалось отправить видео: %s", e)
+        await message.answer(
+            "Не смог отправить видео 😔 file_id не подходит к этому шлюзу.\n"
+            "Отправь видео боту вручную — я запомню новый file_id в логах."
+        )
+
 
 @dp.message(F.text)
 async def handle_text(message: Message):
@@ -42,22 +59,35 @@ async def handle_text(message: Message):
         try:
             await message.answer_video(video=VIDEO_FILE_ID)
         except Exception as e:
-            logging.exception("Ошибка отправки видео: %s", e)
+            log.exception("Ошибка отправки видео: %s", e)
             await message.answer("Не смог отправить видео 😔")
 
+
+@dp.message(F.video)
+async def catch_video(message: Message):
+    # Если пользователь пришлёт видео — залогируем его file_id,
+    # чтобы можно было подставить в VIDEO_FILE_ID
+    log.info("ПОЛУЧЕН FILE_ID: %s", message.video.file_id)
+    await message.answer(f"Новый file_id:\n{message.video.file_id}")
+
+
 async def run_bot():
-    # 启动 polling
+    log.info("Запуск polling на %s", BASE_URL)
+    # Удаляем вебхук, чтобы polling не конфликтовал
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e:
+        log.warning("delete_webhook не удался: %s", e)
     await dp.start_polling(bot)
 
+
 def start_bot_thread():
-    # 在独立线程中运行 asyncio 事件循环
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(run_bot())
 
+
 if __name__ == "__main__":
-    # 启动机器人线程
     threading.Thread(target=start_bot_thread, daemon=True).start()
-    # 启动 Flask，监听 Render 分配的端口
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
