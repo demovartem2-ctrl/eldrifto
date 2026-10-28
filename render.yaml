@@ -1,9 +1,111 @@
-services:
-  - type: web
-    name: drift-bot
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
-    envVars:
-      - key: BOT_TOKEN
-        sync: false
+import asyncio
+import logging
+import os
+import threading
+
+from flask import Flask
+from aiogram import Bot, Dispatcher, F
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
+from aiogram.filters import CommandStart
+from aiogram.types import Message
+
+# ==== НАСТРОЙКИ ====
+TOKEN = os.environ.get("BOT_TOKEN", "1780243372:aPw1oJFaZKGqLzbUSPSxZiTyWlssSX_o_ST")
+BASE_URL = "https://misugram.cloud-ip.cc"
+FILE_PATH = "video_id.txt"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("driftbot")
+
+app = Flask(__name__)
+
+@app.route("/")
+@app.route("/health")
+def health():
+    return "OK", 200
+
+server = TelegramAPIServer.from_base(BASE_URL)
+session = AiohttpSession(api=server)
+bot = Bot(token=TOKEN, session=session)
+dp = Dispatcher()
+
+def get_video_id():
+    if os.path.exists(FILE_PATH):
+        with open(FILE_PATH, "r") as f:
+            saved_id = f.read().strip()
+            if saved_id:
+                return saved_id
+    return None
+
+def save_video_id(new_id):
+    with open(FILE_PATH, "w") as f:
+        f.write(new_id)
+    log.info("Новый file_id сохранен в файл: %s", new_id)
+
+async def try_send_video(message: Message, video_id: str):
+    try:
+        log.info("Пытаюсь отправить видео с ID: %s", video_id)
+        await message.answer_video(video=video_id)
+        log.info("Видео успешно отправлено!")
+        return True
+    except Exception as e:
+        log.error("Ошибка при отправке видео: %s", e)
+        return False
+
+@dp.message(CommandStart())
+async def cmd_start(message: Message):
+    video_id = get_video_id()
+    if not video_id:
+        await message.answer("Привет! Я пока не знаю, какое видео отправлять. Пожалуйста, отправь мне видео, и я его запомню.")
+        return
+
+    await message.answer("Привет! Отправляю твоё видео 🎬")
+    success = await try_send_video(message, video_id)
+    if not success:
+        if os.path.exists(FILE_PATH):
+            os.remove(FILE_PATH)
+        await message.answer("Ой, видео сломалось 😔 Пожалуйста, отправь мне его заново (лучше как обычное видео, а не файл/кружок), и я запомню новое.")
+
+@dp.message(F.text)
+async def handle_text(message: Message):
+    text = (message.text or "").strip().lower()
+    if "эль дрифто" in text:
+        video_id = get_video_id()
+        if not video_id:
+            await message.answer("Я пока не знаю, какое видео отправлять. Отправь мне его, и я запомню!")
+            return
+
+        success = await try_send_video(message, video_id)
+        if not success:
+            if os.path.exists(FILE_PATH):
+                os.remove(FILE_PATH)
+            await message.answer("Видео перестало работать 😔 Отправь мне его заново, и я запомню новое.")
+
+@dp.message(F.video)
+async def catch_video(message: Message):
+    new_id = message.video.file_id
+    save_video_id(new_id)
+    log.info("Получено видео. file_id: %s, file_unique_id: %s", new_id, message.video.file_unique_id)
+    await message.answer("✅ Видео сохранено! Теперь я буду отправлять его по команде «эль дрифто».")
+    # Пробуем сразу отправить, чтобы проверить работоспособность
+    await try_send_video(message, new_id)
+
+async def run_bot():
+    log.info("Запуск polling на %s", BASE_URL)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e:
+        log.warning("delete_webhook не удался: %s", e)
+    await dp.start_polling(bot)
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
+
+if __name__ == "__main__":
+    threading.Thread(target=run_flask, daemon=True).start()
+    asyncio.run(run_bot())
