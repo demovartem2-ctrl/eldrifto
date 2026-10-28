@@ -21,7 +21,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("driftbot")
 
-# Flask для Render health check
+# Flask для Render health check (будет работать в фоне)
 app = Flask(__name__)
 
 @app.route("/")
@@ -39,7 +39,6 @@ dp = Dispatcher()
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     log.info("Получен /start от %s", message.from_user.id)
-    # Сначала текст, потом видео — так пользователь точно увидит ответ
     await message.answer("Привет! Вот твоё видео 🎬")
     try:
         await message.answer_video(video=VIDEO_FILE_ID)
@@ -65,15 +64,12 @@ async def handle_text(message: Message):
 
 @dp.message(F.video)
 async def catch_video(message: Message):
-    # Если пользователь пришлёт видео — залогируем его file_id,
-    # чтобы можно было подставить в VIDEO_FILE_ID
     log.info("ПОЛУЧЕН FILE_ID: %s", message.video.file_id)
     await message.answer(f"Новый file_id:\n{message.video.file_id}")
 
 
 async def run_bot():
     log.info("Запуск polling на %s", BASE_URL)
-    # Удаляем вебхук, чтобы polling не конфликтовал
     try:
         await bot.delete_webhook(drop_pending_updates=True)
     except Exception as e:
@@ -81,13 +77,14 @@ async def run_bot():
     await dp.start_polling(bot)
 
 
-def start_bot_thread():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_bot())
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    # use_reloader=False обязателен, иначе Flask создаст лишний поток
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 
 if __name__ == "__main__":
-    threading.Thread(target=start_bot_thread, daemon=True).start()
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    # Flask в фоновом потоке (без сигналов — безопасно)
+    threading.Thread(target=run_flask, daemon=True).start()
+    # aiogram в ГЛАВНОМ потоке
+    asyncio.run(run_bot())
