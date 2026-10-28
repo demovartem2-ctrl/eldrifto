@@ -13,7 +13,9 @@ from aiogram.types import Message
 # ==== НАСТРОЙКИ ====
 TOKEN = os.environ.get("BOT_TOKEN", "1780243372:aPw1oJFaZKGqLzbUSPSxZiTyWlssSX_o_ST")
 BASE_URL = "https://misugram.cloud-ip.cc"
-VIDEO_FILE_ID = "ZG9jOjIwMDY2MTg3NzcwMDM5NDU4Njc"
+
+# Тот самый ID со скриншота
+VIDEO_FILE_ID = "ZG9jOjJxODg2NjIxMzE4MzUwMzk0NTg2Nw"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,7 +23,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("driftbot")
 
-# Flask для Render health check (будет работать в фоне)
 app = Flask(__name__)
 
 @app.route("/")
@@ -45,10 +46,7 @@ async def cmd_start(message: Message):
         log.info("Видео отправлено успешно")
     except Exception as e:
         log.exception("Не удалось отправить видео: %s", e)
-        await message.answer(
-            "Не смог отправить видео 😔 file_id не подходит к этому шлюзу.\n"
-            "Отправь видео боту вручную — я запомню новый file_id в логах."
-        )
+        await message.answer("Не смог отправить видео 😔")
 
 
 @dp.message(F.text)
@@ -64,6 +62,7 @@ async def handle_text(message: Message):
 
 @dp.message(F.video)
 async def catch_video(message: Message):
+    # Если пришлёте новое видео, бот покажет новый ID в чате (на случай если старый перестанет работать)
     log.info("ПОЛУЧЕН FILE_ID: %s", message.video.file_id)
     await message.answer(f"Новый file_id:\n{message.video.file_id}")
 
@@ -79,12 +78,9 @@ async def run_bot():
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    # use_reloader=False обязателен, иначе Flask создаст лишний поток
     app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 
 if __name__ == "__main__":
-    # Flask в фоновом потоке (без сигналов — безопасно)
     threading.Thread(target=run_flask, daemon=True).start()
-    # aiogram в ГЛАВНОМ потоке
-    asyncio.run(run_bot())
+    asyncio.run(run_bot()) 
